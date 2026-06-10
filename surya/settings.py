@@ -55,7 +55,11 @@ class Settings(BaseSettings):
     SURYA_INFERENCE_KEEP_ALIVE: bool = False
     SURYA_INFERENCE_HOST: str = "127.0.0.1"
     SURYA_INFERENCE_PORT: Optional[int] = None  # None = pick a free port
-    SURYA_INFERENCE_PARALLEL: int = 8
+    # Client-side concurrent request count. None = let the backend pick a
+    # sensible default (vllm scales to the server's max_num_seqs / GPU
+    # capacity; llama.cpp uses a conservative slot count). Set an int to
+    # override.
+    SURYA_INFERENCE_PARALLEL: Optional[int] = None
     # Per-parallel-slot KV-cache budget for the llama.cpp backend. Worst-case
     # one OCR request: ~2k for image prefill + SURYA_MAX_TOKENS_FULL_PAGE
     # (8192) generation + ~2k prompt/chat-template overhead ≈ 12k. Below this
