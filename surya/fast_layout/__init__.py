@@ -29,7 +29,10 @@ def _poly(b):
 
 class FastLayoutPredictor:
     def __init__(
-        self, checkpoint: Optional[str] = None, num_threads: Optional[int] = None
+        self,
+        checkpoint: Optional[str] = None,
+        num_threads: Optional[int] = None,
+        use_order: Optional[bool] = None,
     ):
         model_dir = resolve_model_dir(
             checkpoint or settings.FAST_LAYOUT_MODEL_CHECKPOINT
@@ -38,15 +41,30 @@ class FastLayoutPredictor:
             model_dir, num_threads=num_threads, device=settings.FAST_DETECTOR_DEVICE
         )
         # Learned reading-order head (cross-attends to the detector's encoder feature map).
-        # Always runs alongside layout when a checkpoint is configured/available; falls back to
-        # a raster sort otherwise.
-        self.order = load_order_predictor(device=settings.FAST_DETECTOR_DEVICE or "cpu")
-        if self.order is None:
-            logger.warning(
-                "Reading-order model not available; falling back to raster sort "
-                "(top-to-bottom, left-to-right) for all pages."
-            )
+        # use_order (or settings.FAST_LAYOUT_USE_ORDER) sets the per-instance default,
+        # and each __call__ can override it, so callers that mostly don't need order
+        # (e.g. marker, which orders from the PDF text layer) can still request it for
+        # specific pages. The head is loaded lazily on the first call that wants it;
+        # boxes come back in raster order (top-to-bottom, left-to-right) when it's off.
+        self.use_order = (
+            settings.FAST_LAYOUT_USE_ORDER if use_order is None else use_order
+        )
+        self.order = None
+        self._order_load_attempted = False
         self._disable_tqdm = settings.DISABLE_TQDM
+
+    def _load_order(self):
+        if not self._order_load_attempted:
+            self._order_load_attempted = True
+            self.order = load_order_predictor(
+                device=settings.FAST_DETECTOR_DEVICE or "cpu"
+            )
+            if self.order is None:
+                logger.warning(
+                    "Reading-order model not available; falling back to raster sort "
+                    "(top-to-bottom, left-to-right) for all pages."
+                )
+        return self.order
 
     def to(
         self, *args, **kwargs
@@ -58,6 +76,7 @@ class FastLayoutPredictor:
         images: List[Image.Image],
         threshold: Optional[float] = None,
         batch_size: Optional[int] = None,
+        use_order: Optional[bool] = None,
     ) -> List[LayoutResult]:
         if not images:
             return []
@@ -67,7 +86,9 @@ class FastLayoutPredictor:
             else threshold
         )
         batch_size = batch_size or settings.FAST_LAYOUT_BATCH_SIZE or 8
-        want_feats = self.order is not None
+        use_order = self.use_order if use_order is None else use_order
+        order = self._load_order() if use_order else None
+        want_feats = order is not None
         detections = self.model.detect(
             images,
             threshold=threshold,
@@ -80,8 +101,8 @@ class FastLayoutPredictor:
             # Reading order: the learned AR head (cross-attends to the encoder feature map) when
             # available, else a top-to-bottom / left-to-right raster sort.
             feats = getattr(dets, "features", None)
-            if self.order is not None and feats is not None and dets:
-                positions = self.order.order_page(
+            if order is not None and feats is not None and dets:
+                positions = order.order_page(
                     feats,
                     [d["bbox"] for d in dets],
                     [d["label"] for d in dets],
@@ -90,18 +111,19 @@ class FastLayoutPredictor:
                 )
             else:
                 # Order model loaded but no feature map came back — it should have run
-                # but didn't. Surface this; the "model never loaded" case is logged once at init.
-                if self.order is not None and feats is None and dets:
+                # but didn't. Surface this; the "model never loaded" case is logged once
+                # at first load.
+                if order is not None and feats is None and dets:
                     logger.warning(
                         "Reading-order model loaded but detector returned no feature map; "
                         "falling back to raster sort for this page."
                     )
-                order = sorted(
+                raster = sorted(
                     range(len(dets)),
                     key=lambda i: (dets[i]["bbox"][1], dets[i]["bbox"][0]),
                 )
                 positions = [0] * len(dets)
-                for rank, i in enumerate(order):
+                for rank, i in enumerate(raster):
                     positions[i] = rank
             boxes = []
             for d, pos in zip(dets, positions):

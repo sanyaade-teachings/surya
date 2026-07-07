@@ -106,7 +106,7 @@ def load_predictors_cached():
     manager = SuryaInferenceManager()
     layout_predictor = LayoutPredictor(manager)
     rec_predictor = RecognitionPredictor(manager)
-    table_rec_predictor = TableRecPredictor()
+    table_rec_predictor = TableRecPredictor(manager)
 
     # Lazy-import detection / ocr_error to keep startup snappy when the user
     # only wants VLM modes
@@ -199,6 +199,7 @@ def full_page_ocr(img) -> tuple[Image.Image, PageOCRResult, float]:
 
 def table_recognition(
     img: Image.Image,
+    mode: str,
     skip_table_detection: bool,
     use_fast_layout: bool = False,
 ) -> tuple[Image.Image, List[TableResult], float, float]:
@@ -218,12 +219,15 @@ def table_recognition(
         table_imgs = [img.crop(b) for b in table_bboxes]
 
     t = time.perf_counter()
-    table_preds = predictors["table_rec"](table_imgs)
+    if mode == "full":
+        table_preds = predictors["table_rec"].predict_full(table_imgs)
+    else:
+        table_preds = predictors["table_rec"].predict_simple(table_imgs)
     table_rec_elapsed = time.perf_counter() - t
 
     out_img = img.copy()
     for pred, table_img, tbbox in zip(table_preds, table_imgs, table_bboxes):
-        if pred.error or not pred.rows:
+        if pred.error or pred.mode != "simple" or not pred.rows:
             continue
         row_bboxes = [r.bbox for r in pred.rows]
         col_bboxes = [c.bbox for c in pred.cols]
@@ -353,6 +357,12 @@ use_fast_layout = st.sidebar.checkbox(
     value=True,
     help="Use the fast layout detector.",
 )
+table_mode = st.sidebar.radio(
+    "Table mode",
+    options=["simple", "full"],
+    index=0,
+    help="simple: rows+cols only. full: full HTML.",
+)
 skip_table_detection = st.sidebar.checkbox(
     "Skip table detection",
     value=False,
@@ -464,17 +474,22 @@ if run_full_page_ocr:
 
 if run_table_rec:
     table_img, preds, t_layout, t_table = table_recognition(
-        pil_image, skip_table_detection, use_fast_layout=use_fast_layout
+        pil_image, table_mode, skip_table_detection, use_fast_layout=use_fast_layout
     )
     with col1:
         if not skip_table_detection:
             _show_timing("Table Rec — layout", t_layout, f"{len(preds)} tables found")
-        _show_timing("Table Rec", t_table)
+        _show_timing(f"Table Rec — {table_mode}", t_table)
         if not skip_table_detection:
             _show_timing("Table Rec — total", t_layout + t_table)
         st.image(table_img, caption="Table Recognition", use_container_width=True)
         for pred in preds:
-            st.json(pred.model_dump(), expanded=False)
+            if pred.mode == "full" and pred.html:
+                with st.expander("Table HTML"):
+                    render_ocr_html(pred.html, height=400)
+                    st.code(pred.html, language="html")
+            else:
+                st.json(pred.model_dump(), expanded=False)
 
 
 if run_ocr_errors:

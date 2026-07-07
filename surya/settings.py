@@ -72,12 +72,17 @@ class Settings(BaseSettings):
     SURYA_INFERENCE_TIMEOUT_SECONDS: float = 600.0
     SURYA_INFERENCE_STARTUP_TIMEOUT: float = 600.0
     SURYA_INFERENCE_LOGPROBS: bool = True
-    # Force layout output through a JSON schema via guided decoding.
+    # Force layout/table_rec output through a JSON schema via guided decoding.
     # Eliminates malformed-JSON failures at small decode-throughput cost.
     SURYA_GUIDED_LAYOUT: bool = True
+    # Disabled: with no minItems in TABLE_REC_JSON_SCHEMA, the constrained
+    # decoder closes the array after one element at temperature=0. The model
+    # produces well-formed JSON without the schema.
+    SURYA_GUIDED_TABLE_REC: bool = False
 
     # Token budgets
     SURYA_MAX_TOKENS_LAYOUT: int = 3072
+    SURYA_MAX_TOKENS_TABLE_REC: int = 3072
     SURYA_MAX_TOKENS_BLOCK_CEILING: int = 8192
     SURYA_MAX_TOKENS_FULL_PAGE: int = 12288
 
@@ -130,9 +135,10 @@ class Settings(BaseSettings):
     FAST_LAYOUT_BATCH_SIZE: Optional[int] = None
     FAST_LAYOUT_CONFIDENCE_THRESHOLD: float = 0.4
     FAST_ORDER_MODEL_CHECKPOINT: str = "hf://datalab-to/surya_models/fast_order"
-    FAST_TABLE_MODEL_CHECKPOINT: str = "hf://datalab-to/surya_models/fast_table_v2"
-    FAST_TABLE_BATCH_SIZE: Optional[int] = None
-    FAST_TABLE_CONFIDENCE_THRESHOLD: float = 0.4
+    # Run the learned reading-order head after fast layout. When False, boxes come
+    # back in raster order (top-to-bottom, left-to-right) and the order model is
+    # neither loaded nor run — saves latency at the cost of reading-order quality.
+    FAST_LAYOUT_USE_ORDER: bool = True
     # Device for the rf-detr fast detectors. None = auto (cuda > mps > cpu). Override to
     # force "cpu"/"cuda"/"mps". (ONNX engine, if used, stays CPU.)
     FAST_DETECTOR_DEVICE: Optional[str] = None
