@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     SURYA_MAX_TOKENS_BLOCK_CEILING: int = 8192
     SURYA_MAX_TOKENS_FULL_PAGE: int = 12288
 
+    # Full-page OCR: progressive-temperature regeneration before block-mode fallback.
+    # Off by default (single greedy pass -> block fallback); opt-in for benchmarking.
+    SURYA_FULLPAGE_REGEN: bool = False
+
     BBOX_SCALE: int = 1000
 
     # vllm
@@ -122,6 +126,22 @@ class Settings(BaseSettings):
     # ---- OCR Error (kept) ---------------------------------------------------
     OCR_ERROR_MODEL_CHECKPOINT: str = "s3://ocr_error_detection/2025_02_18"
     OCR_ERROR_BATCH_SIZE: Optional[int] = None
+
+    # ---- Fast layout / table (rf-detr, CPU) ---------------------------------
+    # Lightweight detectors. Checkpoint may be a local dir (rf-detr .pth + config.json, or an
+    # exported model.onnx + config.json), an hf://<repo>/<subfolder> ref, or an s3:// path.
+    # Override via FAST_LAYOUT_MODEL_CHECKPOINT / FAST_TABLE_MODEL_CHECKPOINT.
+    FAST_LAYOUT_MODEL_CHECKPOINT: str = "hf://datalab-to/surya_models/fast_layout_448"
+    FAST_LAYOUT_BATCH_SIZE: Optional[int] = None
+    FAST_LAYOUT_CONFIDENCE_THRESHOLD: float = 0.4
+    FAST_ORDER_MODEL_CHECKPOINT: str = "hf://datalab-to/surya_models/fast_order"
+    # Run the learned reading-order head after fast layout. When False, boxes come
+    # back in raster order (top-to-bottom, left-to-right) and the order model is
+    # neither loaded nor run — saves latency at the cost of reading-order quality.
+    FAST_LAYOUT_USE_ORDER: bool = True
+    # Device for the rf-detr fast detectors. None = auto (cuda > mps > cpu). Override to
+    # force "cpu"/"cuda"/"mps". (ONNX engine, if used, stays CPU.)
+    FAST_DETECTOR_DEVICE: Optional[str] = None
 
     # ---- Debug / draw fonts (label rendering on annotated images) ----------
     RECOGNITION_RENDER_FONTS: Dict[str, str] = {
